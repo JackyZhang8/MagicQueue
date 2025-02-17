@@ -1,6 +1,18 @@
 # MagicQueue
 
+MagicQueue is a powerful Go queue library that provides reliable message queue functionality with persistent storage and automatic recovery mechanisms. It uses Redis as the message queue and LevelDB for persistent storage, ensuring automatic recovery of unprocessed messages in case of system crashes or abnormal exits.
+
 MagicQueue 是一个强大的 Go 语言队列库，提供可靠的消息队列功能，支持持久化存储和自动恢复机制。它使用 Redis 作为消息队列，LevelDB 作为持久化存储，确保在系统崩溃或异常退出时能够自动恢复未处理的消息。
+
+## Features
+
+- High-performance message queue using Redis
+- Persistent storage using LevelDB for fault tolerance
+- Support for message grouping and topics
+- Automatic retry mechanism
+- Concurrent processing capability
+- Elegant chainable API
+- Exception recovery mechanism
 
 ## 特性
 
@@ -15,7 +27,7 @@ MagicQueue 是一个强大的 Go 语言队列库，提供可靠的消息队列�
 ## 安装
 
 ```bash
-go get github.com/yourusername/MagicQueue
+go get github.com/JackyZhang8/MagicQueue
 ```
 
 ## 快速开始
@@ -188,4 +200,4 @@ Copyright (C) MagicQueue
 
 ## 作者
 
-Author ZYW@
+Author JackyZhang8

@@ -22,14 +22,14 @@ func (h *EmailHandler) Execute(payload *MagicQueue.Payload) *MagicQueue.Result {
 	var task EmailTask
 	err := payload.ParseBody(&task)
 	if err != nil {
-		return MagicQueue.NewResult(false, fmt.Sprintf("Failed to parse task: %v", err), nil)
+		return MagicQueue.NewQueueResult(false, fmt.Sprintf("Failed to parse task: %v", err), nil)
 	}
 
 	// 模拟发送邮件
 	log.Printf("Sending email to: %s, subject: %s", task.To, task.Subject)
 	time.Sleep(time.Second) // 模拟网络延迟
 
-	return MagicQueue.NewResult(true, "Email sent successfully", nil)
+	return MagicQueue.NewQueueResult(true, "Email sent successfully", nil)
 }
 
 func main() {
@@ -63,19 +63,16 @@ func main() {
 			Topic:     "email",
 			Group:     "notification",
 			Body:      task,
-			MaxRetry:  3,
 			IsPersist: true,
 		})
 
 		if err != nil {
-			log.Printf("Failed to enqueue task: %v", err)
+			log.Printf("Failed to enqueue email %d: %v", i, err)
 		} else {
-			log.Printf("Task enqueued with ID: %s", id)
+			log.Printf("Enqueued email %d with ID: %s", i, id)
 		}
-
-		time.Sleep(time.Second * 2) // 间隔发送
 	}
 
-	// 保持程序运行
-	select {}
+	// 等待所有邮件发送完成
+	time.Sleep(10 * time.Second)
 }
