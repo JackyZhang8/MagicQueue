@@ -13,6 +13,7 @@ MagicQueue 是一个强大的 Go 语言队列库，提供可靠的消息队列�
 - Concurrent processing capability
 - Elegant chainable API
 - Exception recovery mechanism
+- Periodic queue statistics reporting
 
 ## 特性
 
@@ -23,6 +24,7 @@ MagicQueue 是一个强大的 Go 语言队列库，提供可靠的消息队列�
 - 并发处理能力
 - 优雅的链式调用 API
 - 异常恢复机制
+- 定时队列统计报告
 
 ## 安装
 
@@ -129,6 +131,22 @@ if err != nil {
 - `Enqueue(payload *Payload) (error, string)`: 发送消息到队列
 - `GetQueueSize(topic string, group string) int64`: 获取队列大小
 
+### 队列统计
+
+MagicQueue 会自动每分钟输出队列统计信息，包括：
+- 每个主题/分组队列的当前消息数量
+- 清晰的统计日志格式
+
+统计信息示例：
+```
+=== Queue Statistics ===
+Queue my_queue_group1::topic1: 42 messages
+Queue my_queue_group2::topic2: 13 messages
+=====================
+```
+
+统计功能会在调用 `StartWorkers()` 时自动启动，无需额外配置。这有助于监控队列的运行状况和及时发现潜在的消息堆积问题。
+
 ### Payload 结构
 
 ```go
@@ -196,7 +214,27 @@ queue.StartWorkers(runtime.NumCPU())
 
 ## 许可证
 
-Copyright (C) MagicQueue
+MIT License
+
+Copyright (c) 2025 MagicQueue
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ## 作者
 

@@ -244,10 +244,44 @@ func (r *MQueue) parseHandlerKey(name string) (string, string) {
 	return name[index+2:], name[:index]
 }
 
-func (r *MQueue) StartWorkers(workerNum int) {
-	if workerNum > 0 {
-		r.WorkerNum = workerNum
+type QueueStats struct {
+	QueueSizes map[string]int64 // key: topic_group, value: size
+}
+
+func (r *MQueue) collectStats() *QueueStats {
+	stats := &QueueStats{
+		QueueSizes: make(map[string]int64),
 	}
+	
+	// Collect sizes for all known queues
+	for handlerKey := range r.Handlers {
+		topic, group := r.parseHandlerKey(handlerKey)
+		size := r.GetQueueSize(topic, group)
+		queueKey := r.formatQueueKey(topic, group)
+		stats.QueueSizes[queueKey] = size
+	}
+	
+	return stats
+}
+
+func (r *MQueue) startStatsReporter() {
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		
+		for range ticker.C {
+			stats := r.collectStats()
+			log.Printf("=== Queue Statistics ===")
+			for queueKey, size := range stats.QueueSizes {
+				log.Printf("Queue %s: %d messages", queueKey, size)
+			}
+			log.Printf("=====================")
+		}
+	}()
+}
+
+func (r *MQueue) StartWorkers(workerNum int) {
+	r.WorkerNum = workerNum
 	defer r.cleanup()
 	
 	go r.recoverPersistentMessages()
@@ -256,6 +290,8 @@ func (r *MQueue) StartWorkers(workerNum int) {
 		topic, group := r.parseHandlerKey(key)
 		go r.startMessageConsumer(topic, group)
 	}
+	
+	r.startStatsReporter()
 	
 	for n := 0; n < r.WorkerNum; n++ {
 		go r.processMessages(n)
