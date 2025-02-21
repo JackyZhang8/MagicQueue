@@ -43,8 +43,14 @@ func NewQueueResult(state bool, msg string, data interface{}) *Result {
 	return &Result{State: state, Message: msg, Data: data}
 }
 
+type QueueDriver interface {
+	Size(key string) (int64, error)
+	Pop(key string) ([]byte, error)
+	Push(key string, value []byte) error
+}
+
 type MQueue struct {
-	db             *redis.Client
+	driver         QueueDriver
 	ldb            *leveldb.DB
 	MaxRetry       int
 	Retry          int
@@ -56,9 +62,19 @@ type MQueue struct {
 	Name           string
 }
 
+// NewQueue 创建新的队列实例
+func NewQueue(name string) *MQueue {
+	return &MQueue{
+		Name:     name,
+		Handlers: make(map[string]Queueable),
+	}
+}
+
 func (r *MQueue) TestQueue() error {
-	_, err := r.db.Ping().Result()
-	return err
+	if r.driver == nil {
+		return errors.New("queue driver not set")
+	}
+	return nil
 }
 
 func (r *MQueue) RegisterOnInterrupt(listener RecoveryListener) *MQueue {
@@ -73,7 +89,25 @@ func (r *MQueue) SetHandler(topic string, group string, e Queueable) *MQueue {
 }
 
 func (r *MQueue) UseRedis(client *redis.Client) *MQueue {
-	r.db = client
+	queue, err := NewRedisQueue(&RedisConfig{
+		Addr:     client.Options().Addr,
+		Password: client.Options().Password,
+		DB:       client.Options().DB,
+	})
+	if err != nil {
+		log.Printf("Failed to initialize Redis queue: %v", err)
+		return r
+	}
+	r.driver = queue
+	return r
+}
+
+// UseMemory 使用内存队列
+func (r *MQueue) UseMemory(config *MemoryConfig) *MQueue {
+	if config == nil {
+		config = &MemoryConfig{}
+	}
+	r.driver = NewMemoryQueue(config)
 	return r
 }
 
@@ -97,22 +131,31 @@ func (r *MQueue) formatQueueKey(topic string, group string) string {
 }
 
 func (r *MQueue) GetQueueSize(topic string, group string) int64 {
-	cmd := r.db.LLen(r.formatQueueKey(topic, group))
-	length, err := cmd.Result()
-	if err != nil {
-		log.Info(err)
+	if r.driver == nil {
 		return 0
 	}
-	return length
+	size, err := r.driver.Size(r.formatQueueKey(topic, group))
+	if err != nil {
+		log.Printf("Failed to get queue size: %v", err)
+		return 0
+	}
+	return size
 }
 
 func (r *MQueue) dequeue(topic string, group string) (*Payload, []byte, error) {
-	var payload Payload
-	cmd := r.db.LPop(r.formatQueueKey(topic, group))
-	ret, err := cmd.Bytes()
-	if err != nil {
-		return nil, nil, cmd.Err()
+	if r.driver == nil {
+		return nil, nil, errors.New("queue driver not set")
 	}
+	
+	var payload Payload
+	ret, err := r.driver.Pop(r.formatQueueKey(topic, group))
+	if err != nil {
+		return nil, nil, err
+	}
+	if ret == nil {
+		return nil, nil, nil
+	}
+	
 	err = json.Unmarshal(ret, &payload)
 	if err != nil {
 		return nil, nil, err
@@ -121,9 +164,14 @@ func (r *MQueue) dequeue(topic string, group string) (*Payload, []byte, error) {
 }
 
 func (r *MQueue) Enqueue(payload *Payload) (error, string) {
+	if r.driver == nil {
+		return errors.New("queue driver not set"), ""
+	}
+	
 	if len(payload.Topic) <= 0 {
 		return errors.New("TopicId can not be empty"), ""
 	}
+	
 	id, err := uuid.NewUUID()
 	if err != nil {
 		return err, ""
@@ -144,7 +192,7 @@ func (r *MQueue) Enqueue(payload *Payload) (error, string) {
 		payload.IsPersist = true
 	}
 
-	_, err = r.db.RPush(r.formatQueueKey(payload.Topic, payload.Group), payloadStr).Result()
+	err = r.driver.Push(r.formatQueueKey(payload.Topic, payload.Group), payloadStr)
 	if err != nil {
 		return err, ""
 	}
@@ -169,28 +217,19 @@ func (r *MQueue) recoverPersistentMessages() {
 			continue
 		}
 		
-		exists, err := r.db.LRange(r.formatQueueKey(payload.Topic, payload.Group), 0, -1).Result()
+		exists, err := r.driver.Size(r.formatQueueKey(payload.Topic, payload.Group))
 		if err != nil {
 			log.Info("Failed to check queue during recovery:", err)
 			continue
 		}
 		
-		payloadExists := false
-		for _, item := range exists {
-			var existingPayload Payload
-			if err := json.Unmarshal([]byte(item), &existingPayload); err == nil {
-				if existingPayload.ID == payload.ID {
-					payloadExists = true
-					break
-				}
-			}
+		if exists > 0 {
+			continue
 		}
 		
-		if !payloadExists {
-			payload.IsPersist = true
-			r.ReadyQueues <- payload
-			log.Info("Recovered message:", payload.ID)
-		}
+		payload.IsPersist = true
+		r.ReadyQueues <- payload
+		log.Info("Recovered message:", payload.ID)
 	}
 	
 	if err := iter.Error(); err != nil {
@@ -375,4 +414,70 @@ func (p *Payload) ParseBody(v interface{}) error {
 		return err
 	}
 	return json.Unmarshal(jsonData, v)
+}
+
+type RedisConfig struct {
+	Addr     string
+	Password string
+	DB       int
+}
+
+type RedisQueue struct {
+	client *redis.Client
+}
+
+func NewRedisQueue(config *RedisConfig) (*RedisQueue, error) {
+	client := redis.NewClient(&redis.Options{
+		Addr:     config.Addr,
+		Password: config.Password,
+		DB:       config.DB,
+	})
+	_, err := client.Ping().Result()
+	if err != nil {
+		return nil, err
+	}
+	return &RedisQueue{client: client}, nil
+}
+
+func (r *RedisQueue) Size(key string) (int64, error) {
+	return r.client.LLen(key).Result()
+}
+
+func (r *RedisQueue) Pop(key string) ([]byte, error) {
+	return r.client.LPop(key).Bytes()
+}
+
+func (r *RedisQueue) Push(key string, value []byte) error {
+	return r.client.RPush(key, value).Err()
+}
+
+type MemoryConfig struct {
+}
+
+type MemoryQueue struct {
+	data map[string][]byte
+}
+
+func NewMemoryQueue(config *MemoryConfig) *MemoryQueue {
+	return &MemoryQueue{
+		data: make(map[string][]byte),
+	}
+}
+
+func (r *MemoryQueue) Size(key string) (int64, error) {
+	return int64(len(r.data[key])), nil
+}
+
+func (r *MemoryQueue) Pop(key string) ([]byte, error) {
+	if len(r.data[key]) == 0 {
+		return nil, nil
+	}
+	ret := r.data[key][0]
+	r.data[key] = r.data[key][1:]
+	return ret, nil
+}
+
+func (r *MemoryQueue) Push(key string, value []byte) error {
+	r.data[key] = append(r.data[key], value)
+	return nil
 }

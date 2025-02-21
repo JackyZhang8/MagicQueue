@@ -1,12 +1,14 @@
 # MagicQueue
 
-MagicQueue is a powerful Go queue library that provides reliable message queue functionality with persistent storage and automatic recovery mechanisms. It uses Redis as the message queue and LevelDB for persistent storage, ensuring automatic recovery of unprocessed messages in case of system crashes or abnormal exits.
+MagicQueue is a powerful Go queue library that provides reliable message queue functionality with persistent storage and automatic recovery mechanisms. It supports both Redis and in-memory queues, with LevelDB for persistent storage, ensuring automatic recovery of unprocessed messages in case of system crashes or abnormal exits.
 
-MagicQueue 是一个强大的 Go 语言队列库，提供可靠的消息队列功能，支持持久化存储和自动恢复机制。它使用 Redis 作为消息队列，LevelDB 作为持久化存储，确保在系统崩溃或异常退出时能够自动恢复未处理的消息。
+MagicQueue 是一个强大的 Go 语言队列库，提供可靠的消息队列功能，支持持久化存储和自动恢复机制。它支持 Redis 和内存队列两种实现，并使用 LevelDB 作为持久化存储，确保在系统崩溃或异常退出时能够自动恢复未处理的消息。
 
 ## Features
 
-- High-performance message queue using Redis
+- Multiple queue implementations:
+  - High-performance Redis queue
+  - Fast in-memory queue for testing or small workloads
 - Persistent storage using LevelDB for fault tolerance
 - Support for message grouping and topics
 - Automatic retry mechanism
@@ -17,7 +19,9 @@ MagicQueue 是一个强大的 Go 语言队列库，提供可靠的消息队列�
 
 ## 特性
 
-- 使用 Redis 作为高性能消息队列
+- 多种队列实现：
+  - 使用 Redis 作为高性能消息队列
+  - 快速的内存队列，适用于测试或小规模工作负载
 - LevelDB 持久化存储，支持故障恢复
 - 支持消息分组和主题
 - 自动重试机制
@@ -45,16 +49,20 @@ import (
 )
 
 func main() {
-    // 初始化 Redis 客户端
+    // 使用 Redis 队列
     rdb := redis.NewClient(&redis.Options{
         Addr: "localhost:6379",
         Password: "",
         DB: 0,
     })
 
-    // 创建队列实例
     queue := MagicQueue.NewQueue("my_queue").
         UseRedis(rdb).
+        UseLevelDb("./data/queue.db")
+
+    // 或者使用内存队列
+    memoryQueue := MagicQueue.NewQueue("my_queue").
+        UseMemory(nil).  // 使用默认配置
         UseLevelDb("./data/queue.db")
 
     // 启动工作者
@@ -115,7 +123,73 @@ if err != nil {
 
 ## 完整示例
 
-查看 [examples/main.go](examples/main.go) 获取完整的示例代码，包括邮件发送队列的实现。
+查看 [examples/main.go](examples/main.go) 获取完整的示例代码，包括：
+1. Redis 队列示例：展示在生产环境中使用 Redis 作为队列后端
+2. 内存队列示例：展示如何使用内存队列进行开发和测试
+
+以下是邮件队列的简化示例代码：
+
+```go
+package main
+
+import (
+    "MagicQueue"
+)
+
+// 定义邮件任务
+type EmailTask struct {
+    To      string `json:"to"`
+    Subject string `json:"subject"`
+    Content string `json:"content"`
+}
+
+// 实现邮件处理器
+type EmailHandler struct{}
+
+func (h *EmailHandler) Execute(payload *MagicQueue.Payload) *MagicQueue.Result {
+    var task EmailTask
+    err := payload.ParseBody(&task)
+    if err != nil {
+        return MagicQueue.NewQueueResult(false, "Failed to parse task", nil)
+    }
+    // 处理邮件发送...
+    return MagicQueue.NewQueueResult(true, "Email sent", nil)
+}
+
+func main() {
+    // 示例 1：使用 Redis 队列（生产环境推荐）
+    redisQueue := MagicQueue.NewQueue("email_service").
+        UseRedis(redisClient).
+        UseLevelDb("./data/queue.db")
+    
+    redisQueue.SetHandler("email", "notification", &EmailHandler{})
+    go redisQueue.StartWorkers(2)
+    
+    // 发送任务到 Redis 队列
+    redisQueue.Enqueue(&MagicQueue.Payload{
+        Topic: "email",
+        Group: "notification",
+        Body:  EmailTask{To: "user@example.com"},
+    })
+    
+    // 示例 2：使用内存队列（开发/测试环境）
+    memoryQueue := MagicQueue.NewQueue("email_service").
+        UseMemory(&MagicQueue.MemoryConfig{
+            MaxQueueSize: 1000, // 可选：设置最大队列大小
+        }).
+        UseLevelDb("./data/queue.db") // 可选：使用 LevelDB 持久化
+    
+    memoryQueue.SetHandler("email", "notification", &EmailHandler{})
+    go memoryQueue.StartWorkers(2)
+    
+    // 发送任务到内存队列
+    memoryQueue.Enqueue(&MagicQueue.Payload{
+        Topic: "email",
+        Group: "notification",
+        Body:  EmailTask{To: "test@example.com"},
+    })
+}
+```
 
 ## API 文档
 
@@ -124,12 +198,27 @@ if err != nil {
 
 ### MQueue 方法
 
-- `UseRedis(client *redis.Client) *MQueue`: 设置 Redis 客户端
+- `UseRedis(client *redis.Client) *MQueue`: 设置 Redis 客户端作为队列实现
+- `UseMemory(config *MemoryConfig) *MQueue`: 使用内存队列实现
 - `UseLevelDb(path string) *MQueue`: 设置 LevelDB 存储路径
 - `SetHandler(topic string, group string, handler Queueable) *MQueue`: 注册消息处理器
 - `StartWorkers(workerNum int)`: 启动工作者处理消息
 - `Enqueue(payload *Payload) (error, string)`: 发送消息到队列
 - `GetQueueSize(topic string, group string) int64`: 获取队列大小
+
+### 队列实现选择
+
+1. **Redis 队列**
+   - 适用于生产环境
+   - 支持分布式部署
+   - 可靠的消息传递
+   - 高性能和可扩展性
+
+2. **内存队列**
+   - 适用于开发和测试环境
+   - 无需额外依赖
+   - 更快的消息处理速度
+   - 重启后消息会丢失（除非使用 LevelDB 持久化）
 
 ### 队列统计
 

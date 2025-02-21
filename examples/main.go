@@ -32,27 +32,9 @@ func (h *EmailHandler) Execute(payload *MagicQueue.Payload) *MagicQueue.Result {
 	return MagicQueue.NewQueueResult(true, "Email sent successfully", nil)
 }
 
-func main() {
-	// 初始化 Redis 客户端
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "", // 没有密码
-		DB:       0,  // 使用默认 DB
-	})
-
-	// 创建队列实例
-	queue := MagicQueue.NewQueue("email_service").
-		UseRedis(rdb).
-		UseLevelDb("./data/queue.db")
-
-	// 注册邮件处理器
-	queue.SetHandler("email", "notification", &EmailHandler{})
-
-	// 启动工作者
-	go queue.StartWorkers(2)
-
-	// 发送一些测试邮件
-	for i := 1; i <= 5; i++ {
+// sendTestEmails 发送测试邮件
+func sendTestEmails(queue *MagicQueue.MQueue, count int) {
+	for i := 1; i <= count; i++ {
 		task := EmailTask{
 			To:      fmt.Sprintf("user%d@example.com", i),
 			Subject: fmt.Sprintf("Test Email %d", i),
@@ -72,7 +54,68 @@ func main() {
 			log.Printf("Enqueued email %d with ID: %s", i, id)
 		}
 	}
+}
+
+// Example1_RedisQueue 展示如何使用 Redis 队列
+func Example1_RedisQueue() {
+	log.Println("=== Redis Queue Example ===")
+	
+	// 初始化 Redis 客户端
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "", // 没有密码
+		DB:       0,  // 使用默认 DB
+	})
+
+	// 创建 Redis 队列实例
+	queue := MagicQueue.NewQueue("email_service").
+		UseRedis(rdb).
+		UseLevelDb("./data/queue.db")
+
+	// 注册邮件处理器
+	queue.SetHandler("email", "notification", &EmailHandler{})
+
+	// 启动工作者
+	go queue.StartWorkers(2)
+
+	// 发送测试邮件
+	sendTestEmails(queue, 5)
 
 	// 等待所有邮件发送完成
 	time.Sleep(10 * time.Second)
+}
+
+// Example2_MemoryQueue 展示如何使用内存队列
+func Example2_MemoryQueue() {
+	log.Println("=== Memory Queue Example ===")
+	
+	// 创建内存队列实例
+	queue := MagicQueue.NewQueue("email_service").
+		UseMemory(&MagicQueue.MemoryConfig{
+			MaxQueueSize: 1000, // 设置最大队列大小
+		}).
+		UseLevelDb("./data/queue.db") // 可选：使用 LevelDB 持久化
+
+	// 注册邮件处理器
+	queue.SetHandler("email", "notification", &EmailHandler{})
+
+	// 启动工作者
+	go queue.StartWorkers(2)
+
+	// 发送测试邮件
+	sendTestEmails(queue, 3)
+
+	// 等待所有邮件发送完成
+	time.Sleep(6 * time.Second)
+}
+
+func main() {
+	// 运行 Redis 队列示例
+	Example1_RedisQueue()
+	
+	log.Println("\nWaiting 5 seconds before starting memory queue example...\n")
+	time.Sleep(5 * time.Second)
+	
+	// 运行内存队列示例
+	Example2_MemoryQueue()
 }
